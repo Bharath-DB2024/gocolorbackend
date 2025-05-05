@@ -1,12 +1,35 @@
 const express = require('express');
+const mongoose = require('mongoose');
+const path = require('path');
+const fs = require('fs').promises;
 const cors = require('cors');
-const axios = require('axios');
-const cheerio = require('cheerio');
-
 const app = express();
+const port = 3000;
+
+// MongoDB connection
+const mongoURL = 'mongodb://127.0.0.1:27017/imageDB';
+mongoose.connect(mongoURL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err.message));
+
+// Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
+// Image Schema
+const imageSchema = new mongoose.Schema({
+  filename: String,
+  contentType: String,
+  imageData: Buffer,
+  color: String,
+  createdAt: { type: Date, default: Date.now },
+});
+const Image = mongoose.model('Image', imageSchema);
+
+// Color matching map
 const colorMatchMap = {
   "black": ["red", "white", "golden yellow", "turquoise", "maroon", "silver grey"],
   "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry"],
@@ -20,7 +43,7 @@ const colorMatchMap = {
   "bottle green": ["cream", "maroon", "golden yellow", "white"],
   "fuchsia": ["white", "grey", "navy", "silver", "dark olive"],
   "baby pink": ["grey", "white", "navy", "cherry", "purple"],
-  "golden yellow": ["navy", "black", "bottle green", "cherry"],
+  "yellow": ["navy", "black", "bottle green", "cherry"],
   "silver grey": ["fuchsia", "navy", "black", "baby pink", "purple"],
   "dusty pink": ["ecru", "brown", "khaki", "maroon"],
   "khaki": ["maroon", "cream", "black", "dark olive", "golden yellow"],
@@ -36,76 +59,168 @@ const colorMatchMap = {
   "purple": ["grey", "white", "baby pink", "silver"]
 };
 
+// Function to extract color from filename
+function extractColorFromFilename(filename) {
+  const nameWithoutExt = path.basename(filename, path.extname(filename));
+  const color = nameWithoutExt
+    .replace(/\d+/g, '')
+    .replace(/[-_]/g, ' ')
+    .trim();
+  return color || 'Unknown';
+}
+
+// Function to extract content type from folder name
+function extractContentTypeFromFolder(folderPath) {
+  const folderName = path.basename(folderPath);
+  return folderName
+    .replace(/[^a-zA-Z0-9\s&]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+// Function to process images from a folder
+async function processImagesFromFolder(folderPath) {
+  try {
+    const files = await fs.readdir(folderPath);
+    const savedImages = [];
+    const contentType = extractContentTypeFromFolder(folderPath);
+
+    for (const file of files) {
+      const filePath = path.join(folderPath, file);
+      const ext = path.extname(file).toLowerCase();
+
+      if (['.jpg', '.jpeg', '.png', '.svg'].includes(ext)) {
+        const buffer = await fs.readFile(filePath);
+        const color = extractColorFromFilename(file);
+
+        const image = new Image({
+          filename: file,
+          contentType: contentType,
+          imageData: buffer,
+          color,
+        });
+
+        const savedImage = await image.save();
+        savedImages.push({
+          filename: savedImage.filename,
+          contentType: savedImage.contentType,
+          color: savedImage.color,
+          createdAt: savedImage.createdAt,
+        });
+      }
+    }
+
+    return savedImages;
+  } catch (error) {
+    throw new Error('Error processing images: ' + error.message);
+  }
+}
+
+// Route to process images from a folder
+app.post('/upload-folder', async (req, res) => {
+  const folderPath = 'C:/Users/BHARATH K/OneDrive/Desktop/keerthana/Leggings & Churidar';
+  try {
+    console.log('Processing folder:', folderPath);
+    const savedImages = await processImagesFromFolder(folderPath);
+    console.log('Saved images:', savedImages);
+    res.status(201).json({
+      message: 'Images uploaded successfully',
+      images: savedImages,
+    });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route to retrieve all image data
+app.get('/images', async (req, res) => {
+  try {
+    const images = await Image.find({}, 'filename contentType color _id imageData createdAt');
+    console.log('Fetched images:', images.length);
+    const imageDataArray = images.map((img) => {
+      const base64Image = img.imageData.toString('base64');
+      const ext = img.filename.split('.').pop().toLowerCase();
+      const mimeType =
+        ext === 'png' ? 'image/png' :
+        ext === 'svg' ? 'image/svg+xml' :
+        'image/jpeg';
+      console.log('Encoding image:', img.filename, 'Size:', base64Image.length);
+      return {
+        _id: img._id,
+        filename: img.filename,
+        contentType: img.contentType,
+        color: img.color,
+        createdAt: img.createdAt,
+        imageData: `data:${mimeType};base64,${base64Image}`,
+      };
+    });
+    res.status(200).json(imageDataArray);
+  } catch (error) {
+    console.error('Images fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch images', details: error.message });
+  }
+});
+
+// Route to get single image
+app.get('/image/:id', async (req, res) => {
+  try {
+    const image = await Image.findById(req.params.id);
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+    res.set('Content-Type', path.extname(image.filename).toLowerCase() === '.svg' ? 'image/svg+xml' : 'image/jpeg');
+    res.send(image.imageData);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching image: ' + error.message });
+  }
+});
+
+// Route to process color and find matching images
 app.post('/api/process-color', async (req, res) => {
   const { majorityColor, selectedLabel } = req.body;
-console.log(req.body);
+  console.log(req.body);
 
   if (!majorityColor || !selectedLabel) {
     return res.status(400).json({ error: 'Missing majorityColor or selectedLabel' });
   }
 
-  // Determine the base URL using switch-case
-  let baseUrl = '';
-  switch (selectedLabel.toLowerCase()) {
-    case 'leggings & churidar':
-      baseUrl = 'https://gocolors.com/collections/leggings-churidar-1?pf_pt_product_type=Shimmer+Leggings&pf_pt_product_type=Active+Leggings&pf_pt_product_type=Ankle+Length+Leggings&pf_pt_product_type=Churidar&pf_pt_product_type=Cropped+Leggings&pf_pt_product_type=Denim+Leggings&pf_pt_product_type=Fitness+Tights&pf_pt_product_type=Ribbed+Leggings&pf_pt_product_type=Ribbed+Warm+Leggings&pf_pt_product_type=Smart+Fit+Leggings&pf_pt_product_type=Two+Tone+Side+Stripe+Active+Leggings&pf_pt_product_type=Velour+Leggings&pf_pt_product_type=Warm+Suede+Leggings&pf_pt_product_type=Yoga+Leggings';
-      break;
-  
-    case 'wide pants':
-      baseUrl = 'https://gocolors.com/collections/palazzos-pants-for-women?pf_pt_product_type=Basic+Palazzos&pf_pt_product_type=Denim+Palazzos&pf_pt_product_type=Knit+Palazzos&pf_pt_product_type=Linen+Culottes&pf_pt_product_type=Linen+Palazzos&pf_pt_product_type=Linen+Wide+Pants&pf_pt_product_type=Printed+Palazzos';
-      break;
-    case 'straight pants':
-      baseUrl = 'https://gocolors.com/collections/active-wear-women?pf_pt_product_type=Training+Capri&pf_pt_product_type=Active+Leggings&pf_pt_product_type=Active+Shorts&pf_pt_product_type=Casual+Joggers&pf_pt_product_type=Casual+Rib+Pants&pf_pt_product_type=Cycling+Shorts&pf_pt_product_type=Fitness+Tights&pf_pt_product_type=Flared+Pants&pf_pt_product_type=Ribbed+Leggings&pf_pt_product_type=Track+Pant&pf_pt_product_type=Two+Tone+Side+Stripe+Active+Leggings&pf_pt_product_type=Yoga+Leggings';
-      break;
-    case 'tapered pants':
-      baseUrl = 'https://gocolors.com/collections/active-wear-women?pf_pt_product_type=Training+Capri&pf_pt_product_type=Active+Leggings&pf_pt_product_type=Active+Shorts&pf_pt_product_type=Casual+Joggers&pf_pt_product_type=Casual+Rib+Pants&pf_pt_product_type=Cycling+Shorts&pf_pt_product_type=Fitness+Tights&pf_pt_product_type=Flared+Pants&pf_pt_product_type=Ribbed+Leggings&pf_pt_product_type=Track+Pant&pf_pt_product_type=Two+Tone+Side+Stripe+Active+Leggings&pf_pt_product_type=Yoga+Leggings';
-      break;
-    case 'jeans & jeggings':
-      baseUrl = 'https://gocolors.com/collections/jeggings-collection?page=1';
-      break;
-
-      case 'Ethnic & Fusion Wear':
-      baseUrl = 'https://gocolors.com/collections/formal-pants-for-women?pf_pt_product_type=Crepe+Pants&pf_pt_product_type=Chino+Pants&pf_pt_product_type=Cotton+Pencil+Pants&pf_pt_product_type=Suede+Treggings&pf_pt_product_type=Linen+Culottes&pf_pt_product_type=Denim+Culottes&pf_pt_product_type=Crepe+Wide+Pants&pf_pt_product_type=Formal+Pant&pf_pt_product_type=Ponte+Bell+Bottoms&pf_pt_product_type=Ponte+Pants';
-      break;
-
-    default:
-      baseUrl = 'https://gocolors.com/collections/formal-pants-for-women?pf_pt_product_type=Crepe+Pants&pf_pt_product_type=Chino+Pants&pf_pt_product_type=Cotton+Pencil+Pants&pf_pt_product_type=Suede+Treggings&pf_pt_product_type=Linen+Culottes&pf_pt_product_type=Denim+Culottes&pf_pt_product_type=Crepe+Wide+Pants&pf_pt_product_type=Formal+Pant&pf_pt_product_type=Ponte+Bell+Bottoms&pf_pt_product_type=Ponte+Pants';
-      break;
-      
-  }
-
   try {
-    const response = await axios.get(baseUrl);
-    console.log("the data",baseUrl);
-    
-    const $ = cheerio.load(response.data);
-    const imageUrls = [];
+    const normalizedColor = majorityColor.toLowerCase();
+    const normalizedLabel = selectedLabel.toLowerCase();
 
-    // Get matching colors and include majority color
-    const matchingColors = colorMatchMap[majorityColor.toLowerCase()] || [];
-    const searchColors = [majorityColor.toLowerCase(), ...matchingColors.map(c => c.toLowerCase())];
- console.log(searchColors);
- 
-    $('img').each((i, img) => {
-      const src = $(img).attr('src');
-      const alt = $(img).attr('alt') || '';
-      const fullSrc = src && !src.startsWith('data:') ? (src.startsWith('http') ? src : `https:${src}`) : null;
+    const matchingColors = colorMatchMap[normalizedColor] || [];
+    const searchColors = [normalizedColor, ...matchingColors];
 
-      if (
-        fullSrc &&
-        searchColors.some(color =>
-          fullSrc.toLowerCase().includes(color) || alt.toLowerCase().includes(color)
-        )
-      ) {
-        imageUrls.push(fullSrc);
-      }
+    const images = await Image.find(
+      {
+        contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
+        color: { $in: searchColors.map((color) => new RegExp(`^${color}$`, 'i')) },
+      },
+      'filename contentType color _id imageData'
+    );
+
+    const imageDataArray = images.map((img) => {
+      const base64Image = img.imageData.toString('base64');
+      const ext = img.filename.split('.').pop().toLowerCase();
+      const mimeType =
+        ext === 'png' ? 'image/png' :
+        ext === 'svg' ? 'image/svg+xml' :
+        'image/jpeg';
+      console.log('Encoding image:', img.filename, 'Size:', base64Image.length);
+      return {
+        id: img._id,
+        contentType: img.contentType,
+        color: img.color,
+        filename: img.filename,
+        imageData: `data:${mimeType};base64,${base64Image}`,
+      };
     });
 
-    // Generate recommendation message
     let message = `Looks great! Your ${selectedLabel} in ${majorityColor} is a perfect choice!`;
     let recommendedStyle = '';
 
-    switch (selectedLabel.toLowerCase()) {
+    switch (normalizedLabel) {
       case 'activewear':
         recommendedStyle = 'Pair with white sneakers for a sporty look!';
         break;
@@ -117,9 +232,7 @@ console.log(req.body);
         break;
     }
 
-
-    console.log(imageUrls);
-    
+    console.log('Processed images:', imageDataArray);
 
     res.status(200).json({
       message,
@@ -127,13 +240,153 @@ console.log(req.body);
       majorityColor,
       matchedColors: searchColors,
       selectedLabel,
-      matchingImages: imageUrls,
+      matchingImages: imageDataArray,
     });
-
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch or process the webpage', details: error.message });
+    console.error('Process color error:', error);
+    res.status(500).json({ error: 'Failed to process color matching', details: error.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Route to get available colors
+app.get('/api/colors', (req, res) => {
+  try {
+    const colors = Object.keys(colorMatchMap);
+    res.status(200).json(colors);
+  } catch (error) {
+    console.error('Colors fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch colors', details: error.message });
+  }
+});
+
+// Serve HTML
+app.get('/', (req, res) => {
+  const colorOptions = Object.keys(colorMatchMap)
+    .map((color) => `<option value="${color}">${color}</option>`)
+    .join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Image Upload and Color Matching</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        button { padding: 10px 20px; margin: 10px 0; }
+        select, input { padding: 8px; margin: 10px 0; }
+        #image-list, #matching-images { margin-top: 20px; }
+        .image-item, .matching-image { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .image-item img, .matching-image img { max-width: 200px; margin-top: 10px; }
+        #recommendation { margin-top: 20px; font-style: italic; }
+      </style>
+    </head>
+    <body>
+      <h1>Image Upload and Color Matching</h1>
+      <h2>Upload Images</h2>
+      <form action="/upload-folder" method="POST">
+        <button type="submit">Upload All Images from Folder</button>
+      </form>
+      <h2>View Stored Images</h2>
+      <button onclick="fetchImages()">Show Stored Images</button>
+      <div id="image-list"></div>
+      <h2>Find Matching Colors</h2>
+      <label for="majorityColor">Select Color:</label>
+      <select id="majorityColor">
+        ${colorOptions}
+      </select><br>
+      <label for="selectedLabel">Select Type:</label>
+      <select id="selectedLabel">
+        <option value="Leggings & Churidar">Leggings & Churidar</option>
+        <option value="Wide Pants">Wide Pants</option>
+        <option value="Straight Pants">Straight Pants</option>
+        <option value="Tapered Pants">Tapered Pants</option>
+        <option value="Jeans & Jeggings">Jeans & Jeggings</option>
+        <option value="Ethnic & Fusion Wear">Ethnic & Fusion Wear</option>
+      </select><br>
+      <button onclick="findMatchingColors()">Find Matching Images</button>
+      <div id="recommendation"></div>
+      <div id="matching-images"></div>
+      <script>
+        function fetchImages() {
+          fetch('/images')
+            .then(res => {
+              if (!res.ok) throw new Error('Failed to fetch images: ' + res.statusText);
+              return res.json();
+            })
+            .then(images => {
+              const list = document.getElementById('image-list');
+              list.innerHTML = '';
+              if (images.length === 0) {
+                list.innerHTML = '<p>No images found in the database.</p>';
+                return;
+              }
+              images.forEach(img => {
+                const div = document.createElement('div');
+                div.className = 'image-item';
+                div.innerHTML = \`
+                  <strong>\${img.filename}</strong><br>
+                  Type: \${img.contentType}<br>
+                  Color: \${img.color}<br>
+                  Uploaded: \${new Date(img.createdAt).toLocaleString()}
+                  <br><img src="\${img.imageData}" alt="\${img.filename}" loading="lazy" onerror="console.error('Failed to load image: \${img.filename}')">
+                \`;
+                list.appendChild(div);
+              });
+            })
+            .catch(err => {
+              console.error('Error fetching images:', err);
+              document.getElementById('image-list').innerHTML = '<p>Error loading images: \${err.message}</p>';
+            });
+        }
+
+        function findMatchingColors() {
+          const majorityColor = document.getElementById('majorityColor').value;
+          const selectedLabel = document.getElementById('selectedLabel').value;
+          fetch('/api/process-color', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ majorityColor, selectedLabel }),
+          })
+            .then(res => {
+              if (!res.ok) throw new Error('Failed to fetch matching images: ' + res.statusText);
+              return res.json();
+            })
+            .then(data => {
+              const recommendationDiv = document.getElementById('recommendation');
+              const matchingImagesDiv = document.getElementById('matching-images');
+              recommendationDiv.innerHTML = \`
+                <p>\${data.message}</p>
+                <p>\${data.recommendedStyle}</p>
+                <p>Matched Colors: \${data.matchedColors.join(', ')}</p>
+              \`;
+              matchingImagesDiv.innerHTML = '';
+              if (data.matchingImages.length === 0) {
+                matchingImagesDiv.innerHTML = '<p>No matching images found.</p>';
+                return;
+              }
+              data.matchingImages.forEach(img => {
+                const div = document.createElement('div');
+                div.className = 'matching-image';
+                div.innerHTML = \`
+                  <img src="\${img.imageData}" alt="\${img.filename}" loading="lazy" onerror="console.error('Failed to load image: \${img.filename}')">
+                  <p>Type: \${img.contentType}</p>
+                  <p>Color: \${img.color}</p>
+                \`;
+                matchingImagesDiv.appendChild(div);
+              });
+            })
+            .catch(err => {
+              console.error('Error fetching matching images:', err);
+              document.getElementById('matching-images').innerHTML = '<p>Error loading matching images: \${err.message}</p>';
+            });
+        }
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// Start server
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
+});
