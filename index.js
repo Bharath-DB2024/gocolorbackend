@@ -32,11 +32,11 @@ const Image = mongoose.model('Image', imageSchema);
 // Color matching map
 const colorMatchMap = {
   "black": ["red", "white", "golden yellow", "turquoise", "maroon", "silver grey"],
-  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry"],
+  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry","Dark Grey"],
   "ecru": ["maroon", "bottle green", "dusty pink", "navy", "denim blue"],
   "navy": ["white", "golden yellow", "cream", "silver grey", "baby pink"],
   "bright red": ["black", "white", "navy", "golden yellow"],
-  "maroon": ["cream", "khaki", "dusty pink", "wheat", "gold", "black"],
+  "maroon": ["cream", "khaki", "dusty pink", "wheat", "gold", "black", "white","jeans blue","blue warm"],
   "red": ["cream", "khaki", "dusty pink", "wheat", "gold", "black"],
   "wheat": ["maroon", "bottle green", "dusty pink", "navy", "denim blue"],
   "cream": ["maroon", "bottle green", "dusty pink", "navy", "denim blue"],
@@ -46,14 +46,14 @@ const colorMatchMap = {
   "yellow": ["navy", "black", "bottle green", "cherry"],
   "silver grey": ["fuchsia", "navy", "black", "baby pink", "purple"],
   "dusty pink": ["ecru", "brown", "khaki", "maroon"],
-  "khaki": ["maroon", "cream", "black", "dark olive", "golden yellow"],
-  "light ink blue": ["cream", "cherry", "golden yellow"],
+  "khaki": ["maroon", "cream", "black", "dark olive", "golden yellow",],
+  "light blue": ["cream", "cherry", "golden yellow"],
   "cherry": ["white", "baby pink", "cream", "bottle green"],
   "light pista": ["turquoise", "white", "dusty pink"],
-  "turquoise blue": ["turquoise blue", "golden yellow", "cream", "navy blue"],
-  "dark rose": ["olive green", "khaki", "cream", "ecru", "antique gold", "dusty pink", "navy blue", "turquoise blue", "dark grey"],
+  "turquoise blue": ["turquoise blue", "golden yellow", "cream", "navy"],
+  "dark rose": ["olive green", "khaki", "cream", "ecru", "antique gold", "dusty pink", "navy", "turquoise blue", "dark grey"],
   "antique gold": ["maroon", "cream", "dark red", "bottle green"],
-  "blue (denim)": ["cream", "maroon", "khaki", "wheat"],
+  "blue": ["cream", "maroon", "khaki", "wheat"],
   "dark olive": ["khaki", "fuchsia", "cream", "denim"],
   "brown": ["cream", "khaki", "dusty pink", "golden yellow"],
   "purple": ["grey", "white", "baby pink", "silver"]
@@ -186,16 +186,21 @@ app.post('/api/process-color', async (req, res) => {
   }
 
   try {
-    const normalizedColor = majorityColor.toLowerCase();
+    const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, ''); // Remove trailing numbers
     const normalizedLabel = selectedLabel.toLowerCase();
 
     const matchingColors = colorMatchMap[normalizedColor] || [];
-    const searchColors = [normalizedColor, ...matchingColors];
+    const searchColors = [normalizedColor, ...matchingColors].map(color =>
+      color.replace(/\s*\d+\s*$/, '') // Normalize all search colors
+    );
+
+    // Create a regex to match base color names, ignoring numbers and text after
+    const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
 
     const images = await Image.find(
       {
         contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
-        color: { $in: searchColors.map((color) => new RegExp(`^${color}$`, 'i')) },
+        color: { $in: colorRegex }, // Match colors using regex
       },
       'filename contentType color _id imageData'
     );
