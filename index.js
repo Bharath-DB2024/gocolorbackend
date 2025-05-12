@@ -5,6 +5,8 @@ const fs = require('fs').promises;
 const cors = require('cors');
 const app = express();
 const port = 3000;
+const compression = require('compression');
+const Joi = require('joi');
 
 // MongoDB connection
 const mongoURL = 'mongodb://127.0.0.1:27017/imageDB';
@@ -32,7 +34,7 @@ const Image = mongoose.model('Image', imageSchema);
 // Color matching map
 const colorMatchMap = {
   "black": ["red", "white", "golden yellow", "turquoise", "maroon", "silver grey"],
-  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry","Dark Grey"],
+  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry","Dark Grey","Ocean Green"],
   "ecru": ["maroon", "bottle green", "dusty pink", "navy", "denim blue"],
   "navy": ["white", "golden yellow", "cream", "silver grey", "baby pink"],
   "bright red": ["black", "white", "navy", "golden yellow"],
@@ -56,7 +58,9 @@ const colorMatchMap = {
   "blue": ["cream", "maroon", "khaki", "wheat"],
   "dark olive": ["khaki", "fuchsia", "cream", "denim"],
   "brown": ["cream", "khaki", "dusty pink", "golden yellow"],
-  "purple": ["grey", "white", "baby pink", "silver"]
+  "purple": ["grey", "white", "baby pink", "silver"],
+  "beige":["white", "brown", "black", "navy ", "blush pink", "olive green", "rust", "terracotta", "mustard yellow", "sage green", "gray", "teal", "aqua", "coral", "peach"],
+  "gray"  :["navy" , "yellow" ,"teal", "maroon", "white Smoke" ]
 };
 
 // Function to extract color from filename
@@ -118,7 +122,7 @@ async function processImagesFromFolder(folderPath) {
 
 // Route to process images from a folder
 app.post('/upload-folder', async (req, res) => {
-  const folderPath = 'C:/Users/BHARATH K/OneDrive/Desktop/keerthana/Leggings & Churidar';
+  const folderPath = 'C:/Users/BHARATH K/OneDrive/Desktop/keerthana/Wide Pants';
   try {
     console.log('Processing folder:', folderPath);
     const savedImages = await processImagesFromFolder(folderPath);
@@ -176,43 +180,138 @@ app.get('/image/:id', async (req, res) => {
   }
 });
 
-// Route to process color and find matching images
-app.post('/api/process-color', async (req, res) => {
-  const { majorityColor, selectedLabel } = req.body;
-  console.log(req.body);
+// // Route to process color and find matching images
+// app.post('/api/process-color', async (req, res) => {
+//   const { majorityColor, selectedLabel } = req.body;
+//   console.log(req.body);
 
-  if (!majorityColor || !selectedLabel) {
-    return res.status(400).json({ error: 'Missing majorityColor or selectedLabel' });
-  }
+//   if (!majorityColor || !selectedLabel) {
+//     return res.status(400).json({ error: 'Missing majorityColor or selectedLabel' });
+//   }
+
+//   try {
+//     const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, ''); // Remove trailing numbers
+//     const normalizedLabel = selectedLabel.toLowerCase();
+
+//     const matchingColors = colorMatchMap[normalizedColor] || [];
+//     const searchColors = [normalizedColor, ...matchingColors].map(color =>
+//       color.replace(/\s*\d+\s*$/, '') // Normalize all search colors
+//     );
+
+//     // Create a regex to match base color names, ignoring numbers and text after
+//     const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
+
+//     const images = await Image.find(
+//       {
+//         contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
+//         color: { $in: colorRegex }, // Match colors using regex
+//       },
+//       'filename contentType color _id imageData'
+//     );
+
+//     const imageDataArray = images.map((img) => {
+//       const base64Image = img.imageData.toString('base64');
+//       const ext = img.filename.split('.').pop().toLowerCase();
+//       const mimeType =
+//         ext === 'png' ? 'image/png' :
+//         ext === 'svg' ? 'image/svg+xml' :
+//         'image/jpeg';
+//       console.log('Encoding image:', img.filename, 'Size:', base64Image.length);
+//       return {
+//         id: img._id,
+//         contentType: img.contentType,
+//         color: img.color,
+//         filename: img.filename,
+//         imageData: `data:${mimeType};base64,${base64Image}`,
+//       };
+//     });
+
+//     let message = `Looks great! Your ${selectedLabel} in ${majorityColor} is a perfect choice!`;
+//     let recommendedStyle = '';
+
+//     switch (normalizedLabel) {
+//       case 'activewear':
+//         recommendedStyle = 'Pair with white sneakers for a sporty look!';
+//         break;
+//       case 'ethnic & fusion wear':
+//         recommendedStyle = 'Add gold accessories to enhance the look!';
+//         break;
+//       default:
+//         recommendedStyle = 'Try a minimalist style with neutral tones.';
+//         break;
+//     }
+
+//     console.log('Processed images:', imageDataArray);
+
+//     res.status(200).json({
+//       message,
+//       recommendedStyle,
+//       majorityColor,
+//       matchedColors: searchColors,
+//       selectedLabel,
+//       matchingImages: imageDataArray,
+//     });
+//   } catch (error) {
+//     console.error('Process color error:', error);
+//     res.status(500).json({ error: 'Failed to process color matching', details: error.message });
+//   }
+// });
+
+app.use(compression());
+
+const mimeTypes = {
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+};
+
+const styleRecommendations = {
+  activewear: 'Pair with white sneakers for a sporty look!',
+  'ethnic & fusion wear': 'Add gold accessories to enhance the look!',
+  default: 'Try a minimalist style with neutral tones.',
+};
+
+const colorCache = new Map();
+const schema = Joi.object({
+  majorityColor: Joi.string().required(),
+  selectedLabel: Joi.string().required(),
+});
+
+app.post('/api/process-color', async (req, res) => {
+  const { error, value } = schema.validate(req.body);
+  if (error) return res.status(400).json({ error: error.details[0].message });
+
+  const { majorityColor, selectedLabel } = value;
 
   try {
-    const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, ''); // Remove trailing numbers
+    const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, '');
     const normalizedLabel = selectedLabel.toLowerCase();
 
-    const matchingColors = colorMatchMap[normalizedColor] || [];
-    const searchColors = [normalizedColor, ...matchingColors].map(color =>
-      color.replace(/\s*\d+\s*$/, '') // Normalize all search colors
-    );
+    // Cache search colors
+    let searchColors = colorCache.get(normalizedColor);
+    if (!searchColors) {
+      const matchingColors = colorMatchMap[normalizedColor] || [];
+      searchColors = [normalizedColor, ...matchingColors].map(color =>
+        color.replace(/\s*\d+\s*$/, '')
+      );
+      colorCache.set(normalizedColor, searchColors);
+    }
 
-    // Create a regex to match base color names, ignoring numbers and text after
     const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
 
     const images = await Image.find(
       {
         contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
-        color: { $in: colorRegex }, // Match colors using regex
+        color: { $in: colorRegex },
       },
       'filename contentType color _id imageData'
     );
 
-    const imageDataArray = images.map((img) => {
+    const imageDataArray = images.map(img => {
       const base64Image = img.imageData.toString('base64');
       const ext = img.filename.split('.').pop().toLowerCase();
-      const mimeType =
-        ext === 'png' ? 'image/png' :
-        ext === 'svg' ? 'image/svg+xml' :
-        'image/jpeg';
-      console.log('Encoding image:', img.filename, 'Size:', base64Image.length);
+      const mimeType = mimeTypes[ext] || 'image/jpeg';
       return {
         id: img._id,
         contentType: img.contentType,
@@ -222,22 +321,8 @@ app.post('/api/process-color', async (req, res) => {
       };
     });
 
-    let message = `Looks great! Your ${selectedLabel} in ${majorityColor} is a perfect choice!`;
-    let recommendedStyle = '';
-
-    switch (normalizedLabel) {
-      case 'activewear':
-        recommendedStyle = 'Pair with white sneakers for a sporty look!';
-        break;
-      case 'ethnic & fusion wear':
-        recommendedStyle = 'Add gold accessories to enhance the look!';
-        break;
-      default:
-        recommendedStyle = 'Try a minimalist style with neutral tones.';
-        break;
-    }
-
-    console.log('Processed images:', imageDataArray);
+    const message = `Looks great! Your ${selectedLabel} in ${majorityColor} is a perfect choice!`;
+    const recommendedStyle = styleRecommendations[normalizedLabel] || styleRecommendations.default;
 
     res.status(200).json({
       message,
@@ -248,7 +333,7 @@ app.post('/api/process-color', async (req, res) => {
       matchingImages: imageDataArray,
     });
   } catch (error) {
-    console.error('Process color error:', error);
+    console.error('Process color error:', error); // Replace with proper logging
     res.status(500).json({ error: 'Failed to process color matching', details: error.message });
   }
 });
