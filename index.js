@@ -257,7 +257,7 @@ app.get('/image/:id', async (req, res) => {
 //   }
 // });
 
-app.use(compression());
+
 
 const mimeTypes = {
   png: 'image/png',
@@ -276,13 +276,165 @@ const colorCache = new Map();
 const schema = Joi.object({
   majorityColor: Joi.string().required(),
   selectedLabel: Joi.string().required(),
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(1),
 });
 
-app.post('/api/process-color', async (req, res) => {
+
+
+
+
+app.post('/api/getsingleimage', async (req, res) => {
   const { error, value } = schema.validate(req.body);
   if (error) return res.status(400).json({ error: error.details[0].message });
 
   const { majorityColor, selectedLabel } = value;
+  console.log('Request body:', req.body);
+  console.log('majorityColor:', majorityColor, 'selectedLabel:', selectedLabel);
+
+  try {
+    const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, '');
+    const normalizedLabel = selectedLabel.toLowerCase();
+    console.log('Normalized:', { normalizedColor, normalizedLabel });
+
+    // Cache search colors
+    let searchColors = colorCache.get(normalizedColor);
+    if (!searchColors) {
+      const matchingColors = colorMatchMap[normalizedColor] || [];
+      searchColors = [normalizedColor, ...matchingColors].map(color =>
+        color.replace(/\s*\d+\s*$/, '')
+      );
+      colorCache.set(normalizedColor, searchColors);
+ 
+    }
+    console.log('Search colors:', searchColors);
+
+    const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
+    const query = {
+      contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
+      color: { $in: colorRegex },
+    };
+    console.log('Query:', query);
+
+    const image = await Image.findOne(query).select('filename contentType color imageData');
+    console.log('Query result:', image);
+
+    if (!image) {
+      console.log('No image found for query:', query);
+      return res.status(404).json({ message: 'No matching image found' });
+    }
+
+    if (!image.imageData || !Buffer.isBuffer(image.imageData)) {
+      console.log('Invalid imageData for image:', image);
+      return res.status(500).json({ error: 'Invalid image data' });
+    }
+
+    const base64Image = image.imageData.toString('base64');
+    const ext = path.extname(image.filename).slice(1).toLowerCase();
+    const mimeType = mimeTypes[ext] || 'image/jpeg';
+    const recommendedStyle = styleRecommendations[normalizedLabel.replace(/\s+/g, '-')] || styleRecommendations.default;
+
+    res.status(200).json({
+      filename: image.filename,
+      contentType: image.contentType,
+      color: image.color,
+      imageData: `data:${mimeType};base64,${base64Image}`,
+      recommendedStyle,
+    });
+  } catch (error) {
+    console.error('Error fetching single image:', error);
+    res.status(500).json({ error: 'Error fetching single image: ' + error.message });
+  }
+});
+
+// app.post('/api/process-color', async (req, res) => {
+//   const { error, value } = schema.validate({
+//     ...req.body,
+//     page: req.body.page ? parseInt(req.body.page) : 1,
+//     limit: req.body.limit ? parseInt(req.body.limit) :1,
+//   });
+//   if (error) return res.status(400).json({ error: error.details[0].message });
+
+//   const { majorityColor, selectedLabel, page, limit } = value;
+
+//   try {
+//     const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, '');
+//     const normalizedLabel = selectedLabel.toLowerCase();
+
+//     // Cache search colors
+//     let searchColors = colorCache.get(normalizedColor);
+//     if (!searchColors) {
+//       const matchingColors = colorMatchMap[normalizedColor] || [];
+//       searchColors = [normalizedColor, ...matchingColors].map(color =>
+//         color.replace(/\s*\d+\s*$/, '')
+//       );
+//       colorCache.set(normalizedColor, searchColors);
+//     }
+
+//     const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
+
+//     // Query with pagination
+//     const skip = (page - 1) * limit;
+//     const query = {
+//       contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
+//       color: { $in: colorRegex },
+//     };
+
+//     // Get total count for pagination metadata
+//     const totalItems = await Image.countDocuments(query);
+
+//     // Fetch paginated images
+//     const images = await Image.find(query, 'filename contentType color _id imageData')
+//       .skip(skip)
+//       .limit(limit);
+
+//     const imageDataArray = images.map(img => {
+//       const base64Image = img.imageData.toString('base64');
+//       const ext = img.filename.split('.').pop().toLowerCase();
+//       const mimeType = mimeTypes[ext] || 'image/jpeg';
+//       return {
+//         id: img._id,
+//         contentType: img.contentType,
+//         color: img.color,
+//         filename: img.filename,
+//         imageData: `data:${mimeType};base64,${base64Image}`,
+//       };
+//     });
+
+//     const message = `Looks great! Your ${selectedLabel} in ${majorityColor} is a perfect choice!`;
+//     const recommendedStyle = styleRecommendations[normalizedLabel] || styleRecommendations.default;
+
+//     res.status(200).json({
+//       message,
+//       recommendedStyle,
+//       majorityColor,
+//       matchedColors: searchColors,
+//       selectedLabel,
+//       matchingImages: imageDataArray,
+//       pagination: {
+//         currentPage: page,
+//         itemsPerPage: limit,
+//         totalItems,
+//         totalPages: Math.ceil(totalItems / limit),
+//       },
+//     });
+//   } catch (error) {
+//     console.error('Process color error:', error);
+//     res.status(500).json({ error: 'Failed to process color matching', details: error.message });
+//   }
+// });
+// Route to get available colors
+
+
+app.post('/api/process-color', async (req, res) => {
+  const { error, value } = schema.validate({
+    ...req.body,
+    page: req.body.page ? parseInt(req.body.page) : 1,
+    limit: req.body.limit ? parseInt(req.body.limit) : 1,
+  });
+  if (error) return res.status(400).json({ error: error.details[0].message });
+
+  const { majorityColor, selectedLabel, page, limit } = value;
 
   try {
     const normalizedColor = majorityColor.toLowerCase().replace(/\s*\d+\s*$/, '');
@@ -300,13 +452,21 @@ app.post('/api/process-color', async (req, res) => {
 
     const colorRegex = searchColors.map(color => new RegExp(`^${color}(?:\\s*\\d+)?`, 'i'));
 
-    const images = await Image.find(
-      {
-        contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
-        color: { $in: colorRegex },
-      },
-      'filename contentType color _id imageData'
-    );
+    // Query with pagination, skipping the first image
+    const skip = (page - 1) * limit + (page === 1 ? 1 : 0); // Skip first image only on page 1
+    const query = {
+      contentType: new RegExp(`^${normalizedLabel}$`, 'i'),
+      color: { $in: colorRegex },
+    };
+
+    // Get total count for pagination metadata (excluding the first image)
+    const totalItems = await Image.countDocuments(query);
+    const adjustedTotalItems = page === 1 ? Math.max(0, totalItems - 1) : totalItems;
+
+    // Fetch paginated images, skipping the first image on page 1
+    const images = await Image.find(query, 'filename contentType color _id imageData')
+      .skip(skip)
+      .limit(limit);
 
     const imageDataArray = images.map(img => {
       const base64Image = img.imageData.toString('base64');
@@ -331,14 +491,19 @@ app.post('/api/process-color', async (req, res) => {
       matchedColors: searchColors,
       selectedLabel,
       matchingImages: imageDataArray,
+      pagination: {
+        currentPage: page,
+        itemsPerPage: limit,
+        totalItems: adjustedTotalItems,
+        totalPages: Math.ceil(adjustedTotalItems / limit),
+      },
     });
   } catch (error) {
-    console.error('Process color error:', error); // Replace with proper logging
+    console.error('Process color error:', error);
     res.status(500).json({ error: 'Failed to process color matching', details: error.message });
   }
 });
 
-// Route to get available colors
 app.get('/api/colors', (req, res) => {
   try {
     const colors = Object.keys(colorMatchMap);
