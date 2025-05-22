@@ -9,7 +9,7 @@ const compression = require('compression');
 const Joi = require('joi');
 
 // MongoDB connection
-const mongoURL = 'mongodb://127.0.0.1:27017/imageDB';
+const mongoURL = 'mongodb+srv://doadmin:Z4h3I892pP60Eu7w@db-mongodb-nyc3-57274-32169585.mongo.ondigitalocean.com/gocolor?tls=true&authSource=admin&replicaSet=db-mongodb-nyc3-57274 ';
 mongoose.connect(mongoURL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -34,7 +34,8 @@ const Image = mongoose.model('Image', imageSchema);
 // Color matching map
 const colorMatchMap = {
   "black": ["red", "white", "golden yellow", "turquoise", "maroon", "silver grey"],
-  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry","Dark Grey","Ocean Green"],
+  "white": ["navy", "black", "fuchsia", "pink", "turquoise", "khaki", "cherry","Dark Grey","Ocean Green","light blue","rayal blue","Light Beige "],
+  "golden yellow": ["black", "white", "navy", "fuchsia", "turquoise", "khaki"],
   "ecru": ["maroon", "bottle green", "dusty pink", "navy", "denim blue"],
   "navy": ["white", "golden yellow", "cream", "silver grey", "baby pink"],
   "bright red": ["black", "white", "navy", "golden yellow"],
@@ -122,7 +123,7 @@ async function processImagesFromFolder(folderPath) {
 
 // Route to process images from a folder
 app.post('/upload-folder', async (req, res) => {
-  const folderPath = 'C:/Users/BHARATH K/OneDrive/Desktop/keerthana/Wide Pants';
+  const folderPath = 'C:/Users/BHARATH K/OneDrive/Desktop/keerthana/Leggings & Churidar';
   try {
     console.log('Processing folder:', folderPath);
     const savedImages = await processImagesFromFolder(folderPath);
