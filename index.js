@@ -3,13 +3,15 @@ const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs').promises;
 const cors = require('cors');
+const dotenv = require('dotenv');
+dotenv.config();
 const app = express();
 const port = 3000;
 const compression = require('compression');
 const Joi = require('joi');
 
 // MongoDB connection
-const mongoURL = 'mongodb+srv://doadmin:Z4h3I892pP60Eu7w@db-mongodb-nyc3-57274-32169585.mongo.ondigitalocean.com/gocolor?tls=true&authSource=admin&replicaSet=db-mongodb-nyc3-57274 ';
+const mongoURL = process.env.mongoURL;
 mongoose.connect(mongoURL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
